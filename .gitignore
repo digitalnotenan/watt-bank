@@ -1,0 +1,7 @@
+.DS_Store
+mac-app/build/
+mac-app/wbsave/bin/
+mac-app/wbsave/obj/
+mac-app/wbsave/out/
+*.zip
+mac-app/firmware/esptool
