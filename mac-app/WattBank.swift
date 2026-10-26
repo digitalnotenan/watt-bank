@@ -8,7 +8,7 @@ import AppKit
 import CoreImage
 import Foundation
 
-let appVersion = "8.1"
+let appVersion = "9.3"
 let maxPerTransfer = 999
 let maxBatch = 9_999
 
@@ -314,9 +314,32 @@ enum SaveTool {
         }
     }
     /// PKHeX version codes → game names.
+    /// Some saves can't tell paired games apart (a Gen 1 save is the same for Red, Green and Blue):
+    /// then the file name decides ("Pokémon - Blue.sav" → Blue).
+    static func resolvedGame(_ code: String?, path: String?) -> String? {
+        guard let code else { return nil }
+        let name = (path.map { ($0 as NSString).lastPathComponent } ?? "").lowercased()
+        let pairs: [String: [(String, String)]] = [
+            "GN": [("blue", "BU"), ("red", "RD"), ("green", "GRN")], "RD": [("blue", "BU"), ("green", "GRN")],
+            "BU": [("red", "RD"), ("green", "GRN")], "RBY": [("blue", "BU"), ("red", "RD"), ("green", "GRN"), ("yellow", "YW")],
+            "GS": [("gold", "GD"), ("silver", "SI")], "GSC": [("crystal", "C"), ("gold", "GD"), ("silver", "SI")],
+            "RS": [("ruby", "R"), ("sapphire", "S")], "FRLG": [("firered", "FR"), ("fire red", "FR"), ("leafgreen", "LG"), ("leaf green", "LG")],
+            "DP": [("diamond", "D"), ("pearl", "P")], "HGSS": [("heartgold", "HG"), ("heart gold", "HG"), ("soulsilver", "SS"), ("soul silver", "SS")],
+            "BW": [("black", "B"), ("white", "W")], "B2W2": [("black", "B2"), ("white", "W2")], "XY": [("x", "X"), ("y", "Y")],
+            "ORAS": [("omega", "OR"), ("alpha", "AS")], "SM": [("sun", "SN"), ("moon", "MN")], "USUM": [("sun", "US"), ("moon", "UM")],
+            "GG": [("pikachu", "GP"), ("eevee", "GE")], "SWSH": [("sword", "SW"), ("shield", "SH")],
+            "BDSP": [("diamond", "BD"), ("pearl", "SP")], "SV": [("scarlet", "SL"), ("violet", "VL")]]
+        for (word, game) in pairs[code] ?? [] {
+            if word.count == 1 {                           // X / Y: whole word only
+                if name.split(whereSeparator: { !$0.isLetter }).contains(where: { $0 == Substring(word) }) { return game }
+            } else if name.contains(word) { return game }
+        }
+        return code
+    }
+
     static func gameName(_ code: String) -> String {
         let names: [String: String] = [
-            "RD": "Red", "GN": "Red/Green/Blue", "BU": "Blue", "YW": "Yellow", "RBY": "Red/Blue/Yellow",
+            "RD": "Red", "GN": "Red/Green/Blue", "GRN": "Green", "BU": "Blue", "YW": "Yellow", "RBY": "Red/Blue/Yellow",
             "GD": "Gold", "SI": "Silver", "C": "Crystal", "GS": "Gold/Silver", "GSC": "Gold/Silver/Crystal",
             "R": "Ruby", "S": "Sapphire", "E": "Emerald", "FR": "FireRed", "LG": "LeafGreen", "RS": "Ruby/Sapphire",
             "FRLG": "FireRed/LeafGreen", "CXD": "Colosseum/XD", "COLO": "Colosseum", "XD": "XD",
@@ -556,7 +579,10 @@ final class Bank: ObservableObject {
     }
     /// The cards shown for the active account: Trainer appears once a save is loaded, Mom when that game has Mom's savings.
     var visibleCards: [String] {
-        cardOrder   // Trainer and Mom always show; they're greyed out until a save (with Mom's savings) is loaded
+        // Trainer and Mom show greyed out until a save is loaded; once one is, the Mom card is left out
+        // for games that have no Mom's savings (only Gold/Silver/Crystal and HeartGold/SoulSilver have them)
+        if let i = currentSave, i.momMoney == nil { return cardOrder.filter { $0 != "mom" } }
+        return cardOrder
     }
     func swapCards(_ a: String, _ b: String) {
         var o = cardOrder
@@ -937,10 +963,9 @@ final class IRLink: ObservableObject {
         t.c_cflag |= tcflag_t(CLOCAL | CREAD)
         t.c_cflag &= ~tcflag_t(HUPCL)
         t.c_lflag &= ~tcflag_t(ECHO | ECHOE | ECHOK | ECHONL | ICANON | ISIG | IEXTEN)   // never echo back to the board
-        withUnsafeMutableBytes(of: &t.c_cc) { cc in cc[Int(VMIN)] = 0; cc[Int(VTIME)] = 1 }   // reads wake every 0.1 s
+        // plain raw mode (VMIN 1, VTIME 0, no flushing): read timeouts on this USB-serial driver make it replay old data
         guard tcsetattr(f, TCSANOW, &t) == 0 else { Darwin.close(f); return }
-        tcflush(f, TCIOFLUSH)                         // drop anything left over from before (installer, old session)
-        _ = fcntl(f, F_SETFL, 0)                      // blocking reads (with the 0.1 s timeout) on the reader thread
+        // the port stays non-blocking; the reader waits with poll() so it can still stop within 0.1 s
         fd = f; port = p; ready = false; openedAt = Date()
         let ctl = Reader(); reader = ctl
         let thread = Thread { [weak self] in
@@ -948,11 +973,19 @@ final class IRLink: ObservableObject {
             var line = [UInt8]()
             var lastLine = "", lastAt = Date.distantPast, repeats = 0
             // the reader thread alone closes the port, without waiting for unsent bytes, so nothing can hang the app
-            func release() { tcflush(f, TCIOFLUSH); _ = fcntl(f, F_SETFL, O_NONBLOCK); Darwin.close(f) }
+            func release() { Darwin.close(f) }
+            var pfd = pollfd(fd: f, events: Int16(POLLIN), revents: 0)
             while true {
                 if ctl.stopped { release(); DispatchQueue.main.async { ctl.onClosed?(); ctl.onClosed = nil }; return }
+                pfd.revents = 0
+                let ready = poll(&pfd, 1, 100)
+                if ready == 0 { continue }
+                if ready < 0 { if errno == EINTR { continue }; release(); DispatchQueue.main.async { self?.lost(f); ctl.onClosed?(); ctl.onClosed = nil }; return }
+                if pfd.revents & Int16(POLLHUP | POLLERR | POLLNVAL) != 0 && pfd.revents & Int16(POLLIN) == 0 {
+                    release(); DispatchQueue.main.async { self?.lost(f); ctl.onClosed?(); ctl.onClosed = nil }; return
+                }
                 let n = read(f, &buf, buf.count)
-                if n == 0 { continue }
+                if n == 0 { release(); DispatchQueue.main.async { self?.lost(f); ctl.onClosed?(); ctl.onClosed = nil }; return }
                 if n < 0 {
                     if errno == EINTR || errno == EAGAIN { continue }
                     release(); DispatchQueue.main.async { self?.lost(f); ctl.onClosed?(); ctl.onClosed = nil }; return
@@ -1372,6 +1405,74 @@ struct IRMeter: View {
     }
 }
 
+/// IR status as a "dynamic island" hanging from the top center of the window (like a MacBook notch): flat on top,
+/// rounded below, growing and shrinking with what it has to say. Same colors as the old status pill:
+/// a soft tint while idle, solid orange (strong) or yellow (weak) while the IR head sees light.
+struct IRIsland: View {
+    @EnvironmentObject var link: IRLink
+    @ObservedObject private var flasher = Flasher.shared
+    var install: () -> Void
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 0.1)) { ctx in
+            let seen = link.ready && ctx.date.timeIntervalSince(link.irSeen) < 0.35
+            let strong = link.irWidest >= 150
+            let bars = !seen ? 0 : link.irWidest >= 150 ? 3 : link.irWidest >= 60 ? 2 : 1
+            let s = status(seen: seen, strong: strong)
+            let solid = seen
+            let ink = solid ? Color.white : s.tint
+            Button(action: { if link.silent { install() } }) {
+                HStack(spacing: 7) {
+                    Image(systemName: s.icon).font(.system(size: 11, weight: .bold))
+                    Text(s.text).font(.system(size: 11, weight: .semibold)).lineLimit(1)
+                    if let p = s.progress {
+                        ProgressView(value: max(p, 0.02)).frame(width: 110).tint(s.tint)
+                        Text("\(Int(p * 100))%").font(.system(size: 10, weight: .bold, design: .monospaced)).monospacedDigit()
+                    }
+                    if seen {
+                        HStack(alignment: .bottom, spacing: 2) {
+                            ForEach(0..<3, id: \.self) { i in
+                                RoundedRectangle(cornerRadius: 1).frame(width: 3, height: CGFloat(5 + i * 3)).opacity(i < bars ? 1 : 0.25)
+                            }
+                        }
+                        Text("\(link.irWidest) µs").font(.system(size: 10, design: .monospaced)).opacity(0.8)
+                    }
+                }
+                .foregroundColor(ink)
+                .padding(.horizontal, 18).padding(.top, 7).padding(.bottom, 8)
+                .background(
+                    UnevenRoundedRectangle(topLeadingRadius: 0, bottomLeadingRadius: 14, bottomTrailingRadius: 14, topTrailingRadius: 0)
+                        .fill(solid ? (strong ? Color.wbOrange : Color.yellow).opacity(0.95) : s.tint.opacity(0.16))
+                )
+                .overlay(
+                    UnevenRoundedRectangle(topLeadingRadius: 0, bottomLeadingRadius: 14, bottomTrailingRadius: 14, topTrailingRadius: 0)
+                        .stroke(s.tint.opacity(solid ? 0 : 0.25), lineWidth: 1)
+                )
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(s.help)
+            .animation(.spring(response: 0.35, dampingFraction: 0.78), value: s.text)
+            .animation(.easeOut(duration: 0.12), value: seen)
+        }
+    }
+    func status(seen: Bool, strong: Bool) -> (text: String, icon: String, tint: Color, progress: Double?, help: String) {
+        if case .flashing(let p) = flasher.state {
+            return ("Installing IR head firmware", "arrow.down.circle.fill", .wbBlue, p, "Writing the IR head firmware to the ESP32")
+        }
+        if link.stuck { return ("IR head stuck · unplug and plug it back in", "exclamationmark.triangle.fill", .wbRed, nil,
+                                "The USB link keeps sending the same line over and over. Unplugging resets it.") }
+        if link.ready {
+            return (seen ? (strong ? "IR light · strong" : "IR light · weak") : "IR head ready",
+                    seen ? "dot.radiowaves.left.and.right" : "checkmark.circle.fill", .wbGreen, nil,
+                    "Lights up whenever the IR head sees infrared light. Strong = good enough to link.")
+        }
+        if link.silent { return ("No Watt Bank firmware · click to install", "arrow.down.circle", .wbOrange, nil,
+                                 "Install the IR head firmware from Watt Bank, no Arduino IDE needed") }
+        if link.port != nil { return ("IR head starting…", "hourglass", .wbOrange, nil, "Talking to the ESP32…") }
+        return ("IR head not connected", "cable.connector.slash", .wbRed, nil, "Plug in the ESP32 IR head (press I for the build guide)")
+    }
+}
+
 /// The Watt Bank logo (yellow bolt badge), from the app bundle; falls back to a drawn bolt-in-circle.
 let wattBankLogoImage: NSImage? = Bundle.main.url(forResource: "logo", withExtension: "png").flatMap { NSImage(contentsOf: $0) }
 /// Card and window logos. "app" = the Watt Bank app icon (drawn by make_icon.swift); every card has its own
@@ -1379,6 +1480,7 @@ let wattBankLogoImage: NSImage? = Bundle.main.url(forResource: "logo", withExten
 struct WattBankLogo: View {
     let size: CGFloat
     var name = "app"
+    var tint: (top: Color, bottom: Color)? = nil      // overrides the badge colors (the Trainer card follows its game)
     static let badges: [String: (symbol: String, top: Color, bottom: Color)] = [
         "logo":          ("bolt.fill",        Color(red: 1, green: 0.84, blue: 0.2),   Color(red: 0.85, green: 0.55, blue: 0.02)),
         "credit_logo":   ("drop.fill",        Color(red: 0.4, green: 0.66, blue: 1),   Color(red: 0.12, green: 0.3, blue: 0.75)),
@@ -1394,7 +1496,7 @@ struct WattBankLogo: View {
             let b = Self.badges[name] ?? Self.badges["logo"]!
             ZStack {
                 RoundedRectangle(cornerRadius: size * 0.28)
-                    .fill(LinearGradient(colors: [b.top, b.bottom], startPoint: .top, endPoint: .bottom))
+                    .fill(LinearGradient(colors: [tint?.top ?? b.top, tint?.bottom ?? b.bottom], startPoint: .top, endPoint: .bottom))
                 RoundedRectangle(cornerRadius: size * 0.28).stroke(Color.black.opacity(0.35), lineWidth: max(1, size * 0.045))
                 Image(systemName: b.symbol).font(.system(size: size * 0.52, weight: .bold)).foregroundColor(.white)
                     .shadow(color: .black.opacity(0.35), radius: 0.5, y: 0.5)
@@ -1498,10 +1600,6 @@ struct ContentView: View {
     var body: some View {
         VStack(spacing: 14) {
             header
-            HStack(alignment: .center, spacing: 12) {
-                accountsBar
-                if bank.current.balance > 0 { Batteries(watts: bank.current.balance, small: true) }   // Watt card batteries, top right
-            }
             // the middle scrolls when the window is shorter than the cards + buttons, so the header (IR status)
             // and the tips bar always stay on screen
             GeometryReader { g in
@@ -1665,26 +1763,23 @@ struct ContentView: View {
     }
 
     var header: some View {
-        HStack(spacing: 10) {
-            WattBankLogo(size: 34)           // app icon
-            Text("Watt Bank").font(.system(size: 22, weight: .bold, design: .rounded))
-            Text("v\(appVersion)").font(.system(size: 11)).foregroundColor(.wbSub)
-            Spacer()
-            if case .flashing(let p) = flasher.state {
-                Pill(text: "Installing IR head firmware… \(Int(p * 100))%", color: .wbBlue)
+        ZStack {
+            HStack(alignment: .bottom, spacing: 12) {
+                VStack(alignment: .leading, spacing: 12) {   // title, then the accounts under it
+                    HStack(spacing: 10) {
+                        WattBankLogo(size: 34)           // app icon
+                        Text("Watt Bank").font(.system(size: 22, weight: .bold, design: .rounded))
+                        Text("v\(appVersion)").font(.system(size: 11)).foregroundColor(.wbSub)
+                    }
+                    accountsBar
+                }
+                Spacer(minLength: 12)
+                if bank.current.balance > 0 { Batteries(watts: bank.current.balance) }   // Watts card batteries, full size, top right
             }
-            else if link.stuck {
-                Pill(text: "IR head stuck repeating · unplug it and plug it back in", color: .wbRed)
-                    .help("The USB link keeps sending the same line over and over. Unplugging resets it.")
-            }
-            else if link.ready { IRMeter() }
-            else if link.silent {
-                Button { irGuideStart = IRGuideSheet.flashStep; showingIRGuide = true } label: {
-                    Pill(text: "No Watt Bank firmware on the ESP32 · Install", color: .wbOrange)
-                }.buttonStyle(.plain).help("Install the IR head firmware from Watt Bank, no Arduino IDE needed")
-            }
-            else if link.port != nil { Pill(text: "IR head starting…", color: .wbOrange) }
-            else { Pill(text: "IR head not connected", color: .wbRed) }
+        }
+        .overlay(alignment: .top) {                       // IR status, hanging from the top edge of the window
+            IRIsland { irGuideStart = IRGuideSheet.flashStep; showingIRGuide = true }
+                .padding(.top, -20)
         }
     }
 
@@ -2322,14 +2417,68 @@ struct HLightning: Shape {
     }
 }
 
+/// Band `index` of `count` diagonal stripes running from the top-left to the bottom-right corner.
+struct DiagonalBand: Shape {
+    let index: Int, count: Int
+    func path(in r: CGRect) -> Path {
+        let k = count >= 3 ? 0.35 : 1.0           // 2 flavors: corner-to-corner; 3+: near-vertical stripes
+        let a = (1 + k) * Double(index) / Double(count), b = (1 + k) * Double(index + 1) / Double(count)
+        var poly = [CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY), CGPoint(x: r.maxX, y: r.maxY), CGPoint(x: r.minX, y: r.maxY)]
+        func u(_ p: CGPoint) -> Double { Double((p.x - r.minX) / r.width) + k * Double((p.y - r.minY) / r.height) }
+        func clip(_ pts: [CGPoint], keep: (Double) -> Bool, at c: Double) -> [CGPoint] {
+            var out: [CGPoint] = []
+            for i in pts.indices {
+                let p = pts[i], q = pts[(i + 1) % pts.count], up = u(p), uq = u(q)
+                if keep(up) { out.append(p) }
+                if keep(up) != keep(uq) {
+                    let t = (c - up) / (uq - up)
+                    out.append(CGPoint(x: p.x + (q.x - p.x) * t, y: p.y + (q.y - p.y) * t))
+                }
+            }
+            return out
+        }
+        if index > 0 { poly = clip(poly, keep: { $0 >= a }, at: a) }
+        if index < count - 1 { poly = clip(poly, keep: { $0 <= b }, at: b) }
+        var p = Path(); if let f = poly.first { p.move(to: f); for q in poly.dropFirst() { p.addLine(to: q) }; p.closeSubpath() }
+        return p
+    }
+}
+
+/// The edge between band `index - 1` and band `index`.
+struct DiagonalSeam: Shape {
+    let index: Int, count: Int
+    func path(in r: CGRect) -> Path {
+        let k = count >= 3 ? 0.35 : 1.0
+        let c = (1 + k) * Double(index) / Double(count)    // x/w + k*y/h = c
+        var pts: [CGPoint] = []
+        let w = Double(r.width), h = Double(r.height)
+        for (x, y) in [(c * w, 0.0), ((c - k) * w, h), (0.0, c / k * h), (w, (c - 1) / k * h)] where x >= -0.01 && x <= w + 0.01 && y >= -0.01 && y <= h + 0.01 {
+            pts.append(CGPoint(x: r.minX + x, y: r.minY + y))
+        }
+        var p = Path(); if pts.count >= 2 { p.move(to: pts[0]); p.addLine(to: pts[1]) }
+        return p
+    }
+}
+
 struct LandscapeBackground: View {
     enum Kind { case grass, water, fire, hearts, ball, bolt }
     let kind: Kind
     var debt = false
     let colors: [Color]                 // the card's own gradient, above the horizon
+    var bands: [[Color]]? = nil         // Neapolitan card: one diagonal band per game when a save fits several
     var body: some View {
         ZStack {
-            LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing)
+            if let bands, bands.count > 1 {
+                ForEach(bands.indices, id: \.self) { i in
+                    DiagonalBand(index: i, count: bands.count)
+                        .fill(LinearGradient(colors: bands[i], startPoint: .topLeading, endPoint: .bottomTrailing))
+                }
+                ForEach(1..<bands.count, id: \.self) { i in          // a fine light seam between the flavors
+                    DiagonalSeam(index: i, count: bands.count).stroke(Color.white.opacity(0.3), lineWidth: 1)
+                }
+            } else {
+                LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing)
+            }
             if kind == .grass {
                 WaveShape(level: 0.58, amp: 0.07, waves: 0.8, phase: 0.6)
                     .fill(LinearGradient(colors: [Color(red: 0.42, green: 0.72, blue: 0.25), Color(red: 0.2, green: 0.5, blue: 0.14)],
@@ -2339,31 +2488,42 @@ struct LandscapeBackground: View {
                                          startPoint: .top, endPoint: .bottom))
                     .shadow(color: .black.opacity(0.2), radius: 3, y: -1)
             } else if kind == .ball {
-                // the trainer's route: a winding dotted trail between stops, ending at a flag
+                // a school ID card: fine security waves, a photo box with a silhouette, and a barcode down the side
                 GeometryReader { g in
                     let w = g.size.width, h = g.size.height
-                    let pts = [CGPoint(x: -10, y: h * 0.92), CGPoint(x: w * 0.22, y: h * 0.7), CGPoint(x: w * 0.5, y: h * 0.86),
-                               CGPoint(x: w * 0.74, y: h * 0.62), CGPoint(x: w * 0.9, y: h * 0.74)]
-                    Path { p in
-                        p.move(to: pts[0])
-                        for i in 1..<pts.count {
-                            let a = pts[i - 1], b = pts[i]
-                            p.addCurve(to: b, control1: CGPoint(x: (a.x + b.x) / 2, y: a.y), control2: CGPoint(x: (a.x + b.x) / 2, y: b.y))
+                    ForEach(0..<9, id: \.self) { k in                 // guilloché-style security lines
+                        Path { p in
+                            let y0 = h * (0.3 + Double(k) * 0.08)
+                            p.move(to: CGPoint(x: 0, y: y0))
+                            for x in stride(from: 0.0, through: Double(w), by: 4) {
+                                p.addLine(to: CGPoint(x: x, y: y0 + sin(x / 18 + Double(k) * 0.9) * 4 + sin(x / 7) * 1.2))
+                            }
+                        }
+                        .stroke(Color.white.opacity(0.09), lineWidth: 0.8)
+                    }
+                    let ph = h * 0.29, pw = ph                       // square photo
+                    ZStack {                                          // the photo
+                        RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.14))
+                        Path { p in                                   // head and shoulders
+                            p.addEllipse(in: CGRect(x: pw * 0.3, y: ph * 0.16, width: pw * 0.4, height: pw * 0.44))
+                            p.move(to: CGPoint(x: pw * 0.1, y: ph))
+                            p.addCurve(to: CGPoint(x: pw * 0.9, y: ph), control1: CGPoint(x: pw * 0.12, y: ph * 0.52),
+                                       control2: CGPoint(x: pw * 0.88, y: ph * 0.52))
+                        }
+                        .fill(Color.white.opacity(0.28))
+                        RoundedRectangle(cornerRadius: 6).stroke(Color.white.opacity(0.4), lineWidth: 1.5)
+                    }
+                    .frame(width: pw, height: ph)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .position(x: w * 0.75 + pw / 2, y: h * 0.665)  // right side, above the ID
+                    let bars: [CGFloat] = [4, 2, 5, 2, 3, 4, 2, 5, 3, 2, 4, 3, 5, 2, 3, 4, 2, 5, 3, 4, 2, 3]
+                    HStack(spacing: 3.5) {                            // barcode along the bottom, below the name
+                        ForEach(0..<(bars.count * 2), id: \.self) { i in
+                            Rectangle().fill(Color.white.opacity(0.42)).frame(width: bars[i % bars.count], height: 8)
                         }
                     }
-                    .stroke(Color.white.opacity(0.35), style: StrokeStyle(lineWidth: 4, lineCap: .round, dash: [1, 9]))
-                    ForEach(1..<4, id: \.self) { i in
-                        Circle().fill(Color.white.opacity(0.22)).frame(width: 16, height: 16)
-                            .overlay(Circle().stroke(Color.white.opacity(0.35), lineWidth: 2)).position(pts[i])
-                    }
-                    Path { p in                                   // little flag at the end of the trail
-                        let f = pts[4]
-                        p.move(to: f); p.addLine(to: CGPoint(x: f.x, y: f.y - 26))
-                        p.addLine(to: CGPoint(x: f.x + 15, y: f.y - 20)); p.addLine(to: CGPoint(x: f.x, y: f.y - 14))
-                    }
-                    .fill(Color.white.opacity(0.3))
-                    Path { p in let f = pts[4]; p.move(to: f); p.addLine(to: CGPoint(x: f.x, y: f.y - 26)) }
-                        .stroke(Color.white.opacity(0.4), lineWidth: 2)
+                    .frame(width: w - 28, alignment: .leading).clipped()
+                    .position(x: w / 2, y: h - 7.5)
                 }
             } else if kind == .bolt {
                 // vector lightning across the bottom half, flowing left → right
@@ -2473,11 +2633,12 @@ struct CardTitleBar: View {
     let title: String
     let tag: String?
     var logo = "logo"
+    var badge: (top: Color, bottom: Color)? = nil
     let tint: Color                     // bar color (a lighter shade of the card)
     let ink: Color                      // title color (a darker shade of the card)
     var body: some View {
         HStack(spacing: 7) {
-            WattBankLogo(size: 24, name: logo).shadow(color: .black.opacity(0.35), radius: 1.5, y: 1)
+            WattBankLogo(size: 24, name: logo, tint: badge).shadow(color: .black.opacity(0.35), radius: 1.5, y: 1)
             Text(title)
                 .font(.system(size: 19, weight: .black, design: .rounded))
                 .tracking(1.5)
@@ -2509,6 +2670,8 @@ struct BankCardFace<Details: View>: View {
     let kind: String
     var tag: String? = nil
     var logo = "logo"
+    var badge: (top: Color, bottom: Color)? = nil
+    var bands: [[Color]]? = nil
     var wallpaper: LandscapeBackground.Kind? = nil
     var debt = false
     var barTint: Color = .white
@@ -2518,12 +2681,27 @@ struct BankCardFace<Details: View>: View {
     var unit = "W"
     var prefix = ""
     let account: Account
+    var noChip = false
     let action: () -> Void
     @ViewBuilder var details: Details
+    private var chip: some View {
+        HStack(spacing: 6) {
+            RoundedRectangle(cornerRadius: 4)
+                .fill(LinearGradient(colors: [Color(red: 1, green: 0.88, blue: 0.5), Color(red: 0.85, green: 0.65, blue: 0.2)],
+                                     startPoint: .topLeading, endPoint: .bottomTrailing))
+                .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.black.opacity(0.25), lineWidth: 0.5))
+                .overlay(Path { p in p.move(to: CGPoint(x: 0, y: 11)); p.addLine(to: CGPoint(x: 32, y: 11))
+                                p.move(to: CGPoint(x: 11, y: 0)); p.addLine(to: CGPoint(x: 11, y: 22))
+                                p.move(to: CGPoint(x: 21, y: 0)); p.addLine(to: CGPoint(x: 21, y: 22)) }
+                            .stroke(Color.black.opacity(0.25), lineWidth: 0.6))
+                .frame(width: 32, height: 22)
+            Image(systemName: "wave.3.right").font(.system(size: 14, weight: .semibold)).opacity(0.9)
+        }
+    }
     var body: some View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 0) {
-                CardTitleBar(title: kind, tag: tag, logo: logo, tint: barTint, ink: barInk)
+                CardTitleBar(title: kind, tag: tag, logo: logo, badge: badge, tint: barTint, ink: barInk)
                     .padding(.horizontal, -6).padding(.top, -5)
                 HStack(alignment: .center, spacing: 10) {
                     VStack(alignment: .leading, spacing: 1) {
@@ -2533,19 +2711,7 @@ struct BankCardFace<Details: View>: View {
                         details
                     }
                     Spacer(minLength: 4)
-                    // chip + contactless mark, on the right
-                    HStack(spacing: 6) {
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(LinearGradient(colors: [Color(red: 1, green: 0.88, blue: 0.5), Color(red: 0.85, green: 0.65, blue: 0.2)],
-                                                 startPoint: .topLeading, endPoint: .bottomTrailing))
-                            .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.black.opacity(0.25), lineWidth: 0.5))
-                            .overlay(Path { p in p.move(to: CGPoint(x: 0, y: 11)); p.addLine(to: CGPoint(x: 32, y: 11))
-                                            p.move(to: CGPoint(x: 11, y: 0)); p.addLine(to: CGPoint(x: 11, y: 22))
-                                            p.move(to: CGPoint(x: 21, y: 0)); p.addLine(to: CGPoint(x: 21, y: 22)) }
-                                        .stroke(Color.black.opacity(0.25), lineWidth: 0.6))
-                            .frame(width: 32, height: 22)
-                        Image(systemName: "wave.3.right").font(.system(size: 14, weight: .semibold)).opacity(0.9)
-                    }
+                    if !noChip { chip }                // chip + contactless mark, on the right (a kid's trainer ID has none)
                 }
                 .padding(.top, 10)
                 Spacer(minLength: 2)
@@ -2561,13 +2727,13 @@ struct BankCardFace<Details: View>: View {
             .shadow(color: .black.opacity(0.35), radius: 1.5, y: 1)
             .frame(width: 250, height: 162, alignment: .topLeading)
             .background(Group {
-                if !debt, let img = art.images[kind.capitalized] {          // custom art replaces the built-in wallpaper
+                if !debt, let img = art.images[kind == "WATTS" ? "Watt" : kind.capitalized] {          // custom art replaces the built-in wallpaper
                     ZStack {
                         LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing)
                         Image(nsImage: img).resizable().interpolation(.high)
                     }
                 }
-                else if let k = wallpaper { LandscapeBackground(kind: k, debt: debt, colors: colors) }
+                else if let k = wallpaper { LandscapeBackground(kind: k, debt: debt, colors: colors, bands: bands) }
                 else { LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing) }
             }.clipShape(RoundedRectangle(cornerRadius: 14)))
             // raised look: light rim on top, soft drop shadow underneath
@@ -2588,7 +2754,7 @@ struct DebitCardView: View {
     let action: () -> Void
     var body: some View {
         let debt = account.balance < 0
-        BankCardFace(kind: "WATT", logo: "logo", wallpaper: debt ? nil : .bolt,
+        BankCardFace(kind: "WATTS", logo: "logo", wallpaper: debt ? nil : .bolt,
                      barTint: debt ? Color(red: 1, green: 0.62, blue: 0.62) : Color(red: 1, green: 0.93, blue: 0.6),
                      barInk: debt ? Color(red: 0.45, green: 0.05, blue: 0.05) : Color(red: 0.45, green: 0.32, blue: 0.0),
                      colors: debt ? [Color(red: 0.75, green: 0.15, blue: 0.15), Color(red: 0.45, green: 0.05, blue: 0.05)]
@@ -2819,15 +2985,70 @@ struct TrainerCardView: View {
     let action: () -> Void
     var body: some View {
         let i = bank.currentSave
-        BankCardFace(kind: "TRAINER", tag: i?.generation.map { "GEN \($0)" }, logo: "trainer_logo", wallpaper: .ball,
-                     barTint: Color(red: 0.86, green: 0.88, blue: 0.92), barInk: Color(red: 0.2, green: 0.24, blue: 0.32),
-                     colors: [Color(red: 0.55, green: 0.6, blue: 0.68), Color(red: 0.28, green: 0.32, blue: 0.4)],
-                     amount: i?.money ?? 0, unit: "", prefix: "₽", account: account, action: action) {
-            Text(i == nil ? "no save loaded · drop one on Watt Bank" : "in \(SaveTool.gameName(i?.game ?? "")) · click to move")
+        let game = SaveTool.resolvedGame(i?.game, path: account.savePath)
+        let flavors = Self.members(game).map { Self.palette($0) }          // a save that fits several games: Neapolitan
+        let c = flavors.first ?? Self.palette(nil), last = flavors.last ?? c
+        BankCardFace(kind: "TRAINER", tag: i?.generation.map { "GEN \($0)" }, logo: "trainer_logo",
+                     badge: (Self.mix(c.top, 1, 0.1), Self.mix(last.bottom, 0, 0.1)),
+                     bands: flavors.count > 1 ? flavors.map { [Self.color($0.top), Self.color($0.bottom)] } : nil,
+                     wallpaper: .ball,
+                     barTint: Self.mix(c.top, 1, 0.55), barInk: Self.mix(c.bottom, 0, 0.45),
+                     colors: [Self.color(c.top), Self.color(c.bottom)],
+                     amount: i?.money ?? 0, unit: "", prefix: "₽", account: account, noChip: true, action: action) {
+            Text(i == nil ? "no save loaded · drop one on Watt Bank" : "in \(SaveTool.gameName(game ?? "")) · click to move")
                 .font(.system(size: 10)).opacity(0.9).lineLimit(1).minimumScaleFactor(0.8)
         }
         .opacity(i == nil ? 0.45 : 1).allowsHitTesting(i != nil)
         .help("The money your trainer carries in the loaded save. Click to move some to Debit.")
+    }
+    typealias RGB = (Double, Double, Double)
+    /// The games a save could belong to when it can't be told apart (each gets a diagonal band, Neapolitan style).
+    static func members(_ game: String?) -> [String?] {
+        let shared: [String: [String]] = [
+            "GN": ["RD", "GN", "BU"], "RBY": ["RD", "BU", "YW"], "GS": ["GD", "SI"], "GSC": ["GD", "SI", "C"],
+            "RS": ["R", "S"], "FRLG": ["FR", "LG"], "DP": ["D", "P"], "HGSS": ["HG", "SS"], "BW": ["B", "W"],
+            "B2W2": ["B2", "W2"], "XY": ["X", "Y"], "ORAS": ["OR", "AS"], "SM": ["SN", "MN"], "USUM": ["US", "UM"],
+            "GG": ["GP", "GE"], "SWSH": ["SW", "SH"], "BDSP": ["BD", "SP"], "SV": ["SL", "VL"]]
+        if let g = game, let m = shared[g] { return m }
+        return [game]
+    }
+    /// The card takes the color of the loaded game (Crystal, Gold, Silver, Ruby…); gray with no save.
+    static func palette(_ game: String?) -> (top: RGB, bottom: RGB) {
+        switch game ?? "" {
+        case "RD", "Y", "OR", "RBY": return ((0.92, 0.25, 0.22), (0.62, 0.08, 0.08))                // Red, Y, Omega Ruby
+        case "GN", "GRN", "LG", "E": return ((0.3, 0.72, 0.35), (0.07, 0.42, 0.16))                        // Green, LeafGreen, Emerald
+        case "BU", "X", "AS", "BD": return ((0.3, 0.52, 0.95), (0.1, 0.24, 0.65))                    // Blue, X, Alpha Sapphire, Brilliant Diamond
+        case "YW", "GP": return ((0.95, 0.76, 0.15), (0.74, 0.52, 0.0))                             // Yellow, Let's Go Pikachu
+        case "GD", "HG", "GS", "GSC": return ((0.86, 0.68, 0.22), (0.58, 0.42, 0.06))               // Gold, HeartGold
+        case "SI", "SS": return ((0.76, 0.79, 0.85), (0.44, 0.48, 0.56))                            // Silver, SoulSilver
+        case "C": return ((0.45, 0.78, 0.92), (0.16, 0.45, 0.66))                                  // Crystal
+        case "R", "RS": return ((0.86, 0.15, 0.3), (0.55, 0.04, 0.14))                              // Ruby
+        case "S": return ((0.2, 0.42, 0.9), (0.06, 0.18, 0.55))                                     // Sapphire
+        case "FR", "FRLG": return ((0.95, 0.42, 0.18), (0.68, 0.18, 0.04))                         // FireRed
+        case "D", "DP": return ((0.5, 0.66, 0.9), (0.24, 0.38, 0.66))                               // Diamond
+        case "P", "SP": return ((0.9, 0.6, 0.78), (0.62, 0.3, 0.5))                                  // Pearl, Shining Pearl
+        case "Pt": return ((0.6, 0.62, 0.68), (0.3, 0.32, 0.38))                                   // Platinum
+        case "B", "BW": return ((0.32, 0.33, 0.36), (0.1, 0.1, 0.12))                               // Black
+        case "W": return ((0.84, 0.85, 0.88), (0.55, 0.57, 0.62))                                   // White
+        case "B2", "B2W2": return ((0.3, 0.38, 0.55), (0.08, 0.12, 0.24))                           // Black 2
+        case "W2": return ((0.86, 0.78, 0.8), (0.6, 0.48, 0.52))                                    // White 2
+        case "SN", "US": return ((0.98, 0.6, 0.2), (0.78, 0.32, 0.05))                              // Sun, Ultra Sun
+        case "MN", "UM", "SM", "USUM": return ((0.5, 0.38, 0.85), (0.24, 0.14, 0.55))               // Moon, Ultra Moon
+        case "GE", "GG": return ((0.78, 0.56, 0.34), (0.5, 0.32, 0.16))                             // Let's Go Eevee
+        case "SW", "SWSH": return ((0.25, 0.68, 0.92), (0.08, 0.38, 0.68))                          // Sword
+        case "SH": return ((0.88, 0.28, 0.5), (0.58, 0.08, 0.28))                                   // Shield
+        case "PLA": return ((0.78, 0.68, 0.5), (0.5, 0.4, 0.26))                                    // Legends: Arceus
+        case "SL", "SV": return ((0.92, 0.3, 0.2), (0.65, 0.12, 0.08))                              // Scarlet
+        case "VL": return ((0.62, 0.32, 0.82), (0.36, 0.12, 0.55))                                  // Violet
+        case "ZA": return ((0.3, 0.75, 0.6), (0.08, 0.45, 0.36))                                    // Legends: Z-A
+        case "CXD", "COLO", "XD", "BATREV": return ((0.55, 0.45, 0.7), (0.28, 0.2, 0.42))
+        default: return ((0.55, 0.6, 0.68), (0.28, 0.32, 0.4))                                      // no save: gray
+        }
+    }
+    static func color(_ c: RGB) -> Color { Color(red: c.0, green: c.1, blue: c.2) }
+    /// `c` moved `t` of the way toward white (1) or black (0).
+    static func mix(_ c: RGB, _ to: Double, _ t: Double) -> Color {
+        Color(red: c.0 + (to - c.0) * t, green: c.1 + (to - c.1) * t, blue: c.2 + (to - c.2) * t)
     }
 }
 
@@ -2842,7 +3063,7 @@ struct MomCardView: View {
                      barTint: Color(red: 1, green: 0.8, blue: 0.9), barInk: Color(red: 0.55, green: 0.1, blue: 0.35),
                      colors: [Color(red: 0.98, green: 0.55, blue: 0.75), Color(red: 0.8, green: 0.3, blue: 0.55)],
                      amount: i?.momMoney ?? 0, unit: "", prefix: "₽", account: account, action: action) {
-            Text(i == nil ? "no save loaded" : i?.momMoney == nil ? "no Mom's savings in \(SaveTool.gameName(i?.game ?? ""))" : "Mom's savings · click to move")
+            Text(i == nil ? "no save loaded" : i?.momMoney == nil ? "no Mom's savings in \(SaveTool.gameName(SaveTool.resolvedGame(i?.game, path: account.savePath) ?? ""))" : "Mom's savings · click to move")
                 .font(.system(size: 10)).opacity(0.9).lineLimit(1).minimumScaleFactor(0.8)
         }
         .opacity(i?.momMoney == nil ? 0.45 : 1).allowsHitTesting(i?.momMoney != nil)
@@ -3945,7 +4166,7 @@ struct IRGuideSheet: View {
             "Stuck at “Connecting”? Hold the board's BOOT button while you click Install. No board found? Install the CP210x or CH340 USB driver (the chip name is next to the USB port).",
         ]),
         GuideStep(title: "6. Plug it into the Mac", image: "ir_step7_connect", lines: [
-            "With the ESP32 plugged in, the badge at the top right of Watt Bank turns green: IR head ready.",
+            "With the ESP32 plugged in, the IR notch at the top center of Watt Bank turns green: IR head ready.",
         ]),
         GuideStep(title: "7. Deposit, withdraw, Mystery Gift", image: "ir_step8_use", lines: [
             "Deposit (↑): Pikachu 2 GS → Watts → Send.   Withdraw (↓): Watts → Receive.",

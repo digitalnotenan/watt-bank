@@ -15,12 +15,12 @@ Pokémon Gold, Silver and Crystal on your Game Boy Color or ModRetro Chromatic.
 
   | Card | What it holds |
   |---|---|
-  | **Watt** | Watts |
+  | **Watts** | Watts |
   | **Debit** | PokéDollars, with no limit |
   | **Credit** | Loans in ₽. The limit doubles as you level up. |
   | **Calories** | Exercise from Apple Health |
-  | **Trainer** | Live wallet in the loaded save |
-  | **Mom** | Mom's savings in GSC and HeartGold/SoulSilver |
+  | **Trainer** | Live wallet in the loaded save, colored like the game (split diagonally when a save fits several games) |
+  | **Mom** | Mom's savings in GSC and HeartGold/SoulSilver (shown only for those games) |
 
 - **Infrared:**
   - **Deposit** watts from the Pikachu 2 GS.

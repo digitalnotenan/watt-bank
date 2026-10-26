@@ -62,10 +62,10 @@ If the receiver never reacts, turn it around (swap its legs).
 
 1. Plug the ESP32 into the Mac with a USB **data** cable.
 2. In Watt Bank, press **I** (Build the IR head), go to step 5 and click **Install firmware** (or press **F**).
-   If an ESP32 without the firmware is plugged in, the badge at the top right offers **Install** too.
-3. In about 20 seconds the badge turns green: **IR head ready**.
+   If an ESP32 without the firmware is plugged in, the IR notch at the top center offers **Install** too.
+3. In about 20 seconds the notch turns green: **IR head ready**.
    - If the board already runs the IR head firmware, its **blue light blinks** first, so you know which board is being written.
-   - While it's being written, the board can't light anything. Watch the progress bar in the guide and the blue badge at the top right.
+   - While it's being written, the board can't light anything. Watch the progress bar in the guide and the blue notch at the top center.
    - When it restarts with the new firmware, the blue light **blinks 3 times**: installed.
 
 - Stuck at "Connecting"? Hold the board's **BOOT** button while you click Install.
@@ -100,7 +100,7 @@ The next two sections are a **backup**, in case the one-click install doesn't wo
 
 ![Finished IR head](images/ir_step7_connect.png)
 
-1. Plug the ESP32 into the Mac. The badge at the top right of Watt Bank turns green.
+1. Plug the ESP32 into the Mac. The IR notch at the top center of Watt Bank turns green.
 2. Hold the device 2–5 cm from the LED and sensor, facing them straight on, away from sunlight.
    - **Deposit (↑):** on the Pikachu 2 GS choose **Watts → Send**.
    - **Withdraw (↓):** on the Pikachu choose **Watts → Receive**, then pick the amount in Watt Bank.

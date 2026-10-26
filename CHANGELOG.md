@@ -1,9 +1,21 @@
 # Changelog
 
+## Watt Bank for Mac 9.3
+
+- **Trainer card:**
+  - Looks like a school ID: security waves, a photo box and a barcode. No chip or tap-to-pay mark.
+  - Takes the color of the loaded game (Red, Blue, Crystal, Gold…). The card's badge follows it.
+  - A save that fits several games (for example FireRed/LeafGreen) gets a split card with one diagonal band per game.
+- **Mom card** shows only for games that have Mom's savings.
+- **IR status** is now a notch hanging from the top center of the window.
+- **Batteries** are back at full size in the top right.
+- The Watt card is now called **WATTS**. The app icon matches its badge.
+- **Fix:** the IR head no longer floods the Mac with repeated lines on some USB serial drivers.
+- New pedometer drawing in the IR guide.
+
 ## Watt Bank for Mac 8.1
 
 - New original card logos (a badge per card) and app icon.
-- New Trainer card wallpaper: a winding route with stops.
 - New guide picture for deposits, withdrawals and Mystery Gift (original drawings, no game art or screenshots).
 
 ## Watt Bank for Mac 8.0 — first public release
