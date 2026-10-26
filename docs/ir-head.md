@@ -109,6 +109,14 @@ The next two sections are a **backup**, in case the one-click install doesn't wo
 
 ![Deposit, withdraw and Mystery Gift](images/ir_step8_use.png)
 
+What the real thing looks like:
+
+![The Pikachu 2 GS and the Mystery Gift screen in Crystal](images/ir_step9_real.png)
+
+<sub>Photo: [Samuel McConnell](https://commons.wikimedia.org/wiki/File:Pokemon_Pikachu_Color,_2006.jpg),
+[CC BY 2.0](https://creativecommons.org/licenses/by/2.0/). Screenshot: Pokémon Crystal, via
+[Bulbapedia](https://bulbapedia.bulbagarden.net/wiki/Mystery_Gift); © Nintendo / Game Freak / Creatures.</sub>
+
 ### Serial commands (for testing)
 
 | Command | Action |

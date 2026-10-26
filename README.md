@@ -7,7 +7,23 @@ It turns your **Apple Health exercise calories** into watts and moves **PokéDol
 game saves (every generation). It can also send **Mystery Gifts** to
 Pokémon Gold, Silver and Crystal on your Game Boy Color or ModRetro Chromatic.
 
+![What Watt Bank does](docs/images/what_it_does.png)
+
+![How to use it](docs/images/how_to_use.png)
+
 ![Watt Bank](docs/screenshot.png)
+
+### The real thing
+
+![The Pikachu 2 GS and the Mystery Gift screen in Crystal](docs/images/ir_step9_real.png)
+
+<sub>Photo: [Samuel McConnell](https://commons.wikimedia.org/wiki/File:Pokemon_Pikachu_Color,_2006.jpg),
+[CC BY 2.0](https://creativecommons.org/licenses/by/2.0/). Screenshot: Pokémon Crystal, via
+[Bulbapedia](https://bulbapedia.bulbagarden.net/wiki/Mystery_Gift); © Nintendo / Game Freak / Creatures.</sub>
+
+**What you need:** a Mac (Apple Silicon), and for the infrared part a Pikachu 2 GS and a ~$10 ESP32 "IR head" that
+you can build in an afternoon (**[guide with pictures](docs/ir-head.md)**). Watt Bank installs the IR head's software
+itself. The calories part only needs an iPhone (**[Shortcut guide](docs/health-shortcut.md)**).
 
 ## Features
 

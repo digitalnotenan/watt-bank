@@ -8,7 +8,7 @@ import AppKit
 import CoreImage
 import Foundation
 
-let appVersion = "9.3"
+let appVersion = "9.4"
 let maxPerTransfer = 999
 let maxBatch = 9_999
 
@@ -4171,6 +4171,10 @@ struct IRGuideSheet: View {
         GuideStep(title: "7. Deposit, withdraw, Mystery Gift", image: "ir_step8_use", lines: [
             "Deposit (↑): Pikachu 2 GS → Watts → Send.   Withdraw (↓): Watts → Receive.",
             "GSC (G): Mystery Gift from the title menu of Gold, Silver or Crystal on a Game Boy Color or Chromatic.",
+        ]),
+        GuideStep(title: "8. What it looks like", image: "ir_step9_real", lines: [
+            "The real Pikachu 2 GS, and the Mystery Gift screen in Crystal.",
+            "Photo: Samuel McConnell, CC BY 2.0 (Wikimedia Commons). Screenshot via Bulbapedia; © Nintendo / Game Freak / Creatures.",
         ]),
         GuideStep(title: "Backup A. Arduino IDE + ESP32 support", image: "ir_step5_arduino", lines: [
             "Only if the one-click install doesn't work. Install Arduino IDE 2. In Settings, paste the boards URL into “Additional boards manager URLs”:",

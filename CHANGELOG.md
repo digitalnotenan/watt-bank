@@ -1,5 +1,10 @@
 # Changelog
 
+## Watt Bank for Mac 9.4
+
+- New last step in the IR head guide, **What it looks like**: a photo of the real Pikachu 2 GS and Crystal's Mystery Gift screen.
+- The GitHub page now explains Watt Bank with pictures: what it does, and how to use it in four steps.
+
 ## Watt Bank for Mac 9.3
 
 - **Trainer card:**
