@@ -1,6 +1,6 @@
 # ⚡ Watt Bank for Mac
 
-A Pokémon-themed bank for your watts, PokéDollars and exercise calories, built as a native macOS app.
+A Bank for your Pikachu Watts, PokéDollars and exercise calories, built as a native macOS app.
 
 Watt Bank stores the **watts** from a *Pokémon Pikachu 2 GS* (sent over infrared through a small ESP32 "IR head").
 It turns your **Apple Health exercise calories** into watts and moves **PokéDollars** in and out of your Pokémon
