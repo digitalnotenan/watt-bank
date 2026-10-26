@@ -4,8 +4,8 @@ A Bank for your Pikachu Watts, PokéDollars and exercise calories, built as a na
 
 Watt Bank stores the **watts** from a *Pokémon Pikachu 2 GS* (sent over infrared through a small ESP32 "IR head").
 It turns your **Apple Health exercise calories** into watts and moves **PokéDollars** in and out of your Pokémon
-game saves (every generation). With a Game Boy Color or ModRetro Chromatic it can also send **Mystery Gifts** to
-Pokémon Gold, Silver and Crystal.
+game saves (every generation). It can also send **Mystery Gifts** to
+Pokémon Gold, Silver and Crystal on your Game Boy Color or ModRetro Chromatic.
 
 ![Watt Bank](docs/screenshot.png)
 
