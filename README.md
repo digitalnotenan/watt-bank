@@ -25,6 +25,20 @@ Pokémon Gold, Silver and Crystal on your Game Boy Color or ModRetro Chromatic.
 you can build in an afternoon (**[guide with pictures](docs/ir-head.md)**). Watt Bank installs the IR head's software
 itself. The calories part only needs an iPhone (**[Shortcut guide](docs/health-shortcut.md)**).
 
+## Build the IR head
+
+![Build the IR head in 6 steps](docs/images/ir_build_overview.png)
+
+1. **Parts (about $10):** an ESP32 dev board, a clear 940 nm IR LED, a dark-blue 940 nm IR receiver, a 100 Ω and a
+   10 kΩ resistor, a breadboard, jumper wires and a USB **data** cable.
+2. **Power:** ESP32 3V3 to the breadboard's red + rail, GND to the blue − rail.
+3. **IR LED (sends):** pin D18 → 100 Ω → LED long leg; LED short leg → GND.
+4. **IR receiver (receives):** pin D19 → receiver short leg, 10 kΩ from D19 to 3V3; receiver long leg → GND.
+5. **Firmware:** plug the ESP32 into the Mac, press **I** in Watt Bank and click **Install firmware**. No Arduino IDE needed.
+6. **Done:** the notch at the top of Watt Bank turns green, **IR head ready**.
+
+Full guide with bigger pictures, the schematic and troubleshooting: **[docs/ir-head.md](docs/ir-head.md)**.
+
 ## Features
 
 - **Cards:**
