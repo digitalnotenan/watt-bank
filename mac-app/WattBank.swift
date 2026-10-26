@@ -8,7 +8,7 @@ import AppKit
 import CoreImage
 import Foundation
 
-let appVersion = "8.0"
+let appVersion = "8.1"
 let maxPerTransfer = 999
 let maxBatch = 9_999
 
@@ -1374,28 +1374,31 @@ struct IRMeter: View {
 
 /// The Watt Bank logo (yellow bolt badge), from the app bundle; falls back to a drawn bolt-in-circle.
 let wattBankLogoImage: NSImage? = Bundle.main.url(forResource: "logo", withExtension: "png").flatMap { NSImage(contentsOf: $0) }
+/// Card and window logos. "app" = the Watt Bank app icon (drawn by make_icon.swift); every card has its own
+/// original badge: a rounded square in the card's colors with a white symbol.
 struct WattBankLogo: View {
     let size: CGFloat
-    var name = "logo"                   // "logo" (Lightning), "debit_logo" (Grass), "credit_logo" (Water)
+    var name = "app"
+    static let badges: [String: (symbol: String, top: Color, bottom: Color)] = [
+        "logo":          ("bolt.fill",        Color(red: 1, green: 0.84, blue: 0.2),   Color(red: 0.85, green: 0.55, blue: 0.02)),
+        "credit_logo":   ("drop.fill",        Color(red: 0.4, green: 0.66, blue: 1),   Color(red: 0.12, green: 0.3, blue: 0.75)),
+        "debit_logo":    ("leaf.fill",        Color(red: 0.36, green: 0.8, blue: 0.4), Color(red: 0.06, green: 0.45, blue: 0.2)),
+        "calories_logo": ("flame.fill",       Color(red: 1, green: 0.6, blue: 0.2),    Color(red: 0.8, green: 0.2, blue: 0.05)),
+        "trainer_logo":  ("figure.walk",      Color(red: 0.62, green: 0.66, blue: 0.74), Color(red: 0.3, green: 0.34, blue: 0.42)),
+        "mom_logo":      ("heart.fill",       Color(red: 1, green: 0.6, blue: 0.78),   Color(red: 0.82, green: 0.28, blue: 0.55)),
+    ]
     var body: some View {
-        if let img = (name == "logo" ? wattBankLogoImage
-                      : Bundle.main.url(forResource: name, withExtension: "png").flatMap { NSImage(contentsOf: $0) }) {
+        if name == "app", let img = wattBankLogoImage {
             Image(nsImage: img).resizable().interpolation(.high).frame(width: size, height: size)
-        } else if name == "calories_logo" {          // Fire energy ball, drawn
-            ZStack {
-                Circle().fill(RadialGradient(colors: [Color(red: 1, green: 0.85, blue: 0.4), Color(red: 0.95, green: 0.4, blue: 0.08),
-                                                      Color(red: 0.6, green: 0.1, blue: 0.02)],
-                                             center: UnitPoint(x: 0.35, y: 0.3), startRadius: 0, endRadius: size * 0.6))
-                Circle().stroke(Color.black.opacity(0.45), lineWidth: max(1, size * 0.05))
-                Image(systemName: "flame.fill").font(.system(size: size * 0.55, weight: .bold))
-                    .foregroundStyle(LinearGradient(colors: [.white, Color(red: 1, green: 0.95, blue: 0.6)], startPoint: .top, endPoint: .bottom))
-                    .shadow(color: .black.opacity(0.4), radius: 0.5, y: 0.5)
-            }.frame(width: size, height: size)
         } else {
+            let b = Self.badges[name] ?? Self.badges["logo"]!
             ZStack {
-                Circle().fill(Color.yellow).frame(width: size, height: size)
-                Image(systemName: "bolt.fill").font(.system(size: size * 0.5, weight: .bold)).foregroundColor(.black)
-            }
+                RoundedRectangle(cornerRadius: size * 0.28)
+                    .fill(LinearGradient(colors: [b.top, b.bottom], startPoint: .top, endPoint: .bottom))
+                RoundedRectangle(cornerRadius: size * 0.28).stroke(Color.black.opacity(0.35), lineWidth: max(1, size * 0.045))
+                Image(systemName: b.symbol).font(.system(size: size * 0.52, weight: .bold)).foregroundColor(.white)
+                    .shadow(color: .black.opacity(0.35), radius: 0.5, y: 0.5)
+            }.frame(width: size, height: size)
         }
     }
 }
@@ -1663,7 +1666,7 @@ struct ContentView: View {
 
     var header: some View {
         HStack(spacing: 10) {
-            WattBankLogo(size: 34)
+            WattBankLogo(size: 34)           // app icon
             Text("Watt Bank").font(.system(size: 22, weight: .bold, design: .rounded))
             Text("v\(appVersion)").font(.system(size: 11)).foregroundColor(.wbSub)
             Spacer()
@@ -2226,9 +2229,37 @@ final class CardArt: ObservableObject {
 }
 
 let fireFlamesImage: NSImage? = Bundle.main.url(forResource: "fire_flames", withExtension: "png").flatMap { NSImage(contentsOf: $0) }
-/// Middle layer (fire_mid.png): the yellow flames enlarged, in orange. Core (fire_core.png): the yellow flames in the holes.
 let fireMidImage: NSImage? = Bundle.main.url(forResource: "fire_mid", withExtension: "png").flatMap { NSImage(contentsOf: $0) }
 let fireCoreImage: NSImage? = Bundle.main.url(forResource: "fire_core", withExtension: "png").flatMap { NSImage(contentsOf: $0) }
+
+/// A row of flame tongues along the bottom of the rect: S-curved sides meeting in a sharp tip, leaning and curling a
+/// little differently each time (same every launch). Scales shrink the row for the inner orange and yellow layers.
+struct FlameRow: Shape {
+    var heightScale: Double = 1, widthScale: Double = 1
+    var seed: UInt64 = 7
+    func path(in rect: CGRect) -> Path {
+        var g = HLightning.RNG(s: seed)
+        let W = Double(rect.width), H = Double(rect.height), base = H * 0.98
+        let n = 10, step = W / Double(n - 1)
+        var p = Path()
+        p.move(to: CGPoint(x: -10, y: H + 5)); p.addLine(to: CGPoint(x: -10, y: base))
+        for i in 0..<n {
+            let cx = Double(i) * step + g.r(-0.25, 0.25) * step
+            let w = step * g.r(1.15, 1.6) * widthScale
+            let h = H * g.r(0.38, 0.62) * heightScale
+            let lean = g.r(-0.35, 0.35) * w, curl = (g.next() < 0.5 ? -1 : 1) * g.r(0.15, 0.35) * w
+            let x0 = cx - w / 2, x1 = cx + w / 2, tx = cx + lean, ty = base - h
+            p.addLine(to: CGPoint(x: x0, y: base))
+            p.addCurve(to: CGPoint(x: tx, y: ty), control1: CGPoint(x: x0 + w * 0.05, y: base - h * 0.45),
+                       control2: CGPoint(x: tx - curl - w * 0.25, y: ty + h * 0.45))
+            p.addCurve(to: CGPoint(x: x1, y: base), control1: CGPoint(x: tx + curl * 0.4 + w * 0.12, y: ty + h * 0.5),
+                       control2: CGPoint(x: x1 - w * 0.05, y: base - h * 0.35))
+        }
+        p.addLine(to: CGPoint(x: W + 10, y: base)); p.addLine(to: CGPoint(x: W + 10, y: H + 5)); p.closeSubpath()
+        return p
+    }
+}
+/// Middle layer (fire_mid.png): the yellow flames enlarged, in orange. Core (fire_core.png): the yellow flames in the holes.
 
 /// Card wallpapers: Debit = rolling grass hills under a blue sky; Credit = wavy water under a blue sky.
 /// Vector lightning: one thick bolt across the whole card at `level` (0 top … 1 bottom), left → right, with a thin
@@ -2308,27 +2339,31 @@ struct LandscapeBackground: View {
                                          startPoint: .top, endPoint: .bottom))
                     .shadow(color: .black.opacity(0.2), radius: 3, y: -1)
             } else if kind == .ball {
-                // a Poké Ball button: a ring and a disc right in the middle of the card
+                // the trainer's route: a winding dotted trail between stops, ending at a flag
                 GeometryReader { g in
-                    let d = g.size.height * 0.62
-                    // the ball's band and ring as ONE shape (sideways Poke Ball): drawn solid, then faded together
-                    let lw = d * 0.09
-                    ZStack {
-                        Rectangle().fill(Color.white)
-                            .frame(width: g.size.width * 1.6, height: lw)
-                            .rotationEffect(.degrees(-32))
-                        Circle().fill(Color.black).frame(width: d - lw, height: d - lw).blendMode(.destinationOut)
-                        Circle().stroke(Color.white, lineWidth: lw).frame(width: d, height: d)
+                    let w = g.size.width, h = g.size.height
+                    let pts = [CGPoint(x: -10, y: h * 0.92), CGPoint(x: w * 0.22, y: h * 0.7), CGPoint(x: w * 0.5, y: h * 0.86),
+                               CGPoint(x: w * 0.74, y: h * 0.62), CGPoint(x: w * 0.9, y: h * 0.74)]
+                    Path { p in
+                        p.move(to: pts[0])
+                        for i in 1..<pts.count {
+                            let a = pts[i - 1], b = pts[i]
+                            p.addCurve(to: b, control1: CGPoint(x: (a.x + b.x) / 2, y: a.y), control2: CGPoint(x: (a.x + b.x) / 2, y: b.y))
+                        }
                     }
-                    .compositingGroup()
-                    .opacity(0.22)
-                    .position(x: g.size.width / 2, y: g.size.height / 2)
-                    ZStack {
-                        Circle().fill(Color.white.opacity(0.14)).frame(width: d * 0.55, height: d * 0.55)
-                        Circle().stroke(Color.black.opacity(0.18), lineWidth: 2).frame(width: d * 0.55, height: d * 0.55)
+                    .stroke(Color.white.opacity(0.35), style: StrokeStyle(lineWidth: 4, lineCap: .round, dash: [1, 9]))
+                    ForEach(1..<4, id: \.self) { i in
+                        Circle().fill(Color.white.opacity(0.22)).frame(width: 16, height: 16)
+                            .overlay(Circle().stroke(Color.white.opacity(0.35), lineWidth: 2)).position(pts[i])
                     }
-                    .frame(width: d, height: d)
-                    .position(x: g.size.width / 2, y: g.size.height / 2)
+                    Path { p in                                   // little flag at the end of the trail
+                        let f = pts[4]
+                        p.move(to: f); p.addLine(to: CGPoint(x: f.x, y: f.y - 26))
+                        p.addLine(to: CGPoint(x: f.x + 15, y: f.y - 20)); p.addLine(to: CGPoint(x: f.x, y: f.y - 14))
+                    }
+                    .fill(Color.white.opacity(0.3))
+                    Path { p in let f = pts[4]; p.move(to: f); p.addLine(to: CGPoint(x: f.x, y: f.y - 26)) }
+                        .stroke(Color.white.opacity(0.4), lineWidth: 2)
                 }
             } else if kind == .bolt {
                 // vector lightning across the bottom half, flowing left → right
@@ -2340,7 +2375,7 @@ struct LandscapeBackground: View {
                 HeartsBackground()
             } else if kind == .fire {
                 if let img = fireFlamesImage {
-                    // flame border
+                    // flame border: red (outside) → orange (middle) → yellow (core), each a gradient
                     GeometryReader { g in
                         let h = g.size.width * img.size.height / img.size.width
                         LinearGradient(colors: [Color(red: 0.92, green: 0.22, blue: 0.05), Color(red: 0.6, green: 0.06, blue: 0.02)],
@@ -2348,7 +2383,6 @@ struct LandscapeBackground: View {
                             .mask(Image(nsImage: img).resizable())
                             .frame(width: g.size.width, height: h)
                             .position(x: g.size.width / 2, y: g.size.height - h / 2 + g.size.height * 0.07)
-                        // red (above) → orange (middle, smaller) → yellow (core, smallest), each a gradient
                         ForEach(Array([(fireMidImage, Color(red: 1, green: 0.64, blue: 0.14), Color(red: 0.95, green: 0.42, blue: 0.05)),
                                        (fireCoreImage, Color(red: 1, green: 0.95, blue: 0.62), Color(red: 1, green: 0.8, blue: 0.3))].enumerated()),
                                 id: \.offset) { _, L in
@@ -2360,6 +2394,13 @@ struct LandscapeBackground: View {
                             }
                         }
                     }
+                } else {
+                    FlameRow(heightScale: 1, widthScale: 1)
+                        .fill(LinearGradient(colors: [Color(red: 0.92, green: 0.23, blue: 0.05), Color(red: 0.6, green: 0.06, blue: 0.02)], startPoint: .top, endPoint: .bottom))
+                    FlameRow(heightScale: 0.62, widthScale: 0.72)
+                        .fill(LinearGradient(colors: [Color(red: 1, green: 0.64, blue: 0.14), Color(red: 0.95, green: 0.42, blue: 0.05)], startPoint: .top, endPoint: .bottom))
+                    FlameRow(heightScale: 0.32, widthScale: 0.45)
+                        .fill(LinearGradient(colors: [Color(red: 1, green: 0.95, blue: 0.62), Color(red: 1, green: 0.8, blue: 0.3)], startPoint: .top, endPoint: .bottom))
                 }
             } else {
                 WaveShape(level: 0.6, amp: 0.03, waves: 3, phase: 0)

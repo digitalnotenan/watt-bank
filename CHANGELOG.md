@@ -1,5 +1,11 @@
 # Changelog
 
+## Watt Bank for Mac 8.1
+
+- New original card logos (a badge per card) and app icon.
+- New Trainer card wallpaper: a winding route with stops.
+- New guide picture for deposits, withdrawals and Mystery Gift (original drawings, no game art or screenshots).
+
 ## Watt Bank for Mac 8.0 — first public release
 
 - **Cards:**
